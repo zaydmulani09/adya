@@ -27,6 +27,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - run: cargo test
       - run: cargo build --no-default-features
+      - name: exec driver with the Python example client
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo run --release -- run exec --url "python3 examples/exec_sqlite.py /tmp/exec.db" -n 1000 -c strict-serializable
+          cargo run --release -- run exec -m rw-register --url "python3 examples/exec_sqlite.py /tmp/exec-rw.db rw-register" -n 1000 -c strict-serializable
 
   # adya against Jepsen's Elle: Elle's own expected results, then random
   # histories checked by both.
