@@ -32,6 +32,7 @@ pub mod graph;
 pub mod history;
 pub mod list_append;
 pub mod model;
+pub mod run;
 pub mod rw_register;
 pub mod sim;
 
