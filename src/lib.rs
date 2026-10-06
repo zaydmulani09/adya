@@ -5,6 +5,7 @@
 //! read-write edges, plus process and real-time order), then hunts for the
 //! cycles that each isolation level forbids.
 
+pub mod graph;
 pub mod history;
 pub mod model;
 
