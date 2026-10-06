@@ -18,6 +18,9 @@ use crate::history::{History, Id, Mop, OpType, ReadValue};
 /// A register value; `None` is the initial `nil`.
 type Val = Option<Id>;
 
+/// A transaction's external reads and writes, by key.
+type Externals = (BTreeMap<Id, Val>, BTreeMap<Id, Id>);
+
 fn read_val(v: &ReadValue) -> Option<Val> {
     match v {
         ReadValue::Nil => Some(None),
@@ -28,7 +31,7 @@ fn read_val(v: &ReadValue) -> Option<Val> {
 
 /// External reads (first read of a key, before writing it) and external
 /// writes (last write of each key) of a transaction.
-fn externals(mops: &[Mop]) -> (BTreeMap<Id, Val>, BTreeMap<Id, Id>) {
+fn externals(mops: &[Mop]) -> Externals {
     let mut reads = BTreeMap::new();
     let mut writes = BTreeMap::new();
     for m in mops {
@@ -64,13 +67,16 @@ pub fn analyze_with(h: &History, opts: Options) -> Analysis<'_> {
     for op in &h.ops {
         for m in &op.value {
             if matches!(m, Mop::Append { .. } | Mop::Read { value: ReadValue::List(_), .. }) {
-                a.unknown("unexpected-txn-micro-op-types", "rw-register histories may only contain writes and scalar reads");
+                a.unknown(
+                    "unexpected-txn-micro-op-types",
+                    "rw-register histories may only contain writes and scalar reads",
+                );
                 return a;
             }
         }
     }
     let oks: Vec<usize> = (0..h.ops.len()).filter(|&i| h.ops[i].kind == OpType::Ok).collect();
-    let ext: HashMap<usize, (BTreeMap<Id, Val>, BTreeMap<Id, Id>)> = (0..h.ops.len())
+    let ext: HashMap<usize, Externals> = (0..h.ops.len())
         .filter(|&i| h.ops[i].kind != OpType::Invoke)
         .map(|i| (i, externals(&h.ops[i].value)))
         .collect();
@@ -94,7 +100,12 @@ pub fn analyze_with(h: &History, opts: Options) -> Analysis<'_> {
     if let Some(((k, v), ws)) = writers.iter().find(|(_, ws)| ws.len() > 1) {
         a.unknown(
             "duplicate-writes",
-            format!("value {} was written to key {} by {} transactions; rw-register needs unique writes", h.show(*v), h.show(*k), ws.len()),
+            format!(
+                "value {} was written to key {} by {} transactions; rw-register needs unique writes",
+                h.show(*v),
+                h.show(*k),
+                ws.len()
+            ),
         );
         return a;
     }
@@ -204,7 +215,8 @@ fn add_source(
         let all: Vec<u32> = (0..vals.len() as u32).collect();
         for scc in g.sccs(&all, |_| true) {
             cyclic = true;
-            let shown: Vec<String> = scc.iter().map(|&i| vals[i as usize].map_or("nil".into(), |v| h.show(v).to_string())).collect();
+            let shown: Vec<String> =
+                scc.iter().map(|&i| vals[i as usize].map_or("nil".into(), |v| h.show(v).to_string())).collect();
             a.push(Anomaly::new(
                 "cyclic-versions",
                 vec![],
@@ -234,7 +246,13 @@ fn internal(h: &History, oks: &[usize], a: &mut Analysis) {
                             a.push(Anomaly::new(
                                 "internal",
                                 vec![h.ops[i].index],
-                                format!("{} read key {} as {}, but its own earlier read or write said {}", a.name(i), h.show(*key), show(v), show(*s)),
+                                format!(
+                                    "{} read key {} as {}, but its own earlier read or write said {}",
+                                    a.name(i),
+                                    h.show(*key),
+                                    show(v),
+                                    show(*s)
+                                ),
                                 json!({"op": a.op_json(i), "mop": crate::check::mop_json(h, m), "expected": show(*s)}),
                             ));
                             break;
@@ -274,7 +292,13 @@ fn g1a_g1b(h: &History, oks: &[usize], a: &mut Analysis) {
                 a.push(Anomaly::new(
                     "G1a",
                     vec![h.ops[i].index, h.ops[w].index],
-                    format!("{} read {} = {}, written by {}, which failed (aborted read)", a.name(i), h.show(*key), h.show(*v), a.name(w)),
+                    format!(
+                        "{} read {} = {}, written by {}, which failed (aborted read)",
+                        a.name(i),
+                        h.show(*key),
+                        h.show(*v),
+                        a.name(w)
+                    ),
                     json!({"op": a.op_json(i), "mop": crate::check::mop_json(h, m), "writer": a.op_json(w)}),
                 ));
             }
@@ -341,7 +365,7 @@ fn lost_update(h: &History, oks: &[usize], a: &mut Analysis) {
 
 struct Explainer {
     versions: BTreeMap<Id, HashSet<(Val, Val)>>,
-    ext: HashMap<usize, (BTreeMap<Id, Val>, BTreeMap<Id, Id>)>,
+    ext: HashMap<usize, Externals>,
 }
 
 impl Explain for Explainer {

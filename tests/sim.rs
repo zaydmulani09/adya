@@ -7,7 +7,8 @@ use adya::sim::{run, Isolation, SimOpts};
 use adya::{check, History, Opts, Report, Valid, Workload};
 
 fn sim(isolation: Isolation, kind: Kind, seed: u64) -> History {
-    let opts = SimOpts { isolation, txns: 2000, seed, gen: GenOpts { kind, ..GenOpts::default() }, ..SimOpts::default() };
+    let opts =
+        SimOpts { isolation, txns: 2000, seed, gen: GenOpts { kind, ..GenOpts::default() }, ..SimOpts::default() };
     History::from_json(&run(&opts)).unwrap()
 }
 
@@ -50,7 +51,11 @@ fn read_committed_is_caught_by_snapshot_isolation() {
         assert_eq!(verdict(&h, Kind::ListAppend, "read-committed").valid, Valid::True, "seed {seed}");
         let si = verdict(&h, Kind::ListAppend, "snapshot-isolation");
         assert_eq!(si.valid, Valid::False, "seed {seed}");
-        assert!(si.anomaly_types.iter().any(|t| t == "G-single-item" || t == "G-nonadjacent-item"), "{:?}", si.anomaly_types);
+        assert!(
+            si.anomaly_types.iter().any(|t| t == "G-single-item" || t == "G-nonadjacent-item"),
+            "{:?}",
+            si.anomaly_types
+        );
     }
 }
 

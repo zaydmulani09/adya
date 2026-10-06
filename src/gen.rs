@@ -120,7 +120,15 @@ impl Gen {
 /// Renders one history operation as a JSON line. `reads[i]` is the result
 /// of `ops[i]` if it is a completed read: a list's elements, or for a
 /// register zero or one element (`nil` or the value).
-pub fn op_line(index: usize, kind: &str, process: usize, time_ns: u64, ops: &[TxnOp], reads: &[Option<Vec<i64>>], list: bool) -> String {
+pub fn op_line(
+    index: usize,
+    kind: &str,
+    process: usize,
+    time_ns: u64,
+    ops: &[TxnOp],
+    reads: &[Option<Vec<i64>>],
+    list: bool,
+) -> String {
     let mut value = String::from("[");
     for (i, op) in ops.iter().enumerate() {
         if i > 0 {

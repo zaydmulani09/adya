@@ -66,7 +66,10 @@ pub fn analyze(h: &History) -> Analysis<'_> {
                     return a;
                 }
                 Mop::Write { .. } | Mop::Read { value: ReadValue::Scalar(_), .. } => {
-                    a.unknown("unexpected-txn-micro-op-types", "list-append histories may only contain appends and list reads");
+                    a.unknown(
+                        "unexpected-txn-micro-op-types",
+                        "list-append histories may only contain appends and list reads",
+                    );
                     return a;
                 }
                 _ => {}
@@ -75,7 +78,8 @@ pub fn analyze(h: &History) -> Analysis<'_> {
     }
 
     let completions: Vec<usize> = (0..h.ops.len()).filter(|&i| h.ops[i].kind != OpType::Invoke).collect();
-    let possible: Vec<usize> = completions.iter().copied().filter(|&i| matches!(h.ops[i].kind, OpType::Ok | OpType::Info)).collect();
+    let possible: Vec<usize> =
+        completions.iter().copied().filter(|&i| matches!(h.ops[i].kind, OpType::Ok | OpType::Info)).collect();
     let oks: Vec<usize> = completions.iter().copied().filter(|&i| h.ops[i].kind == OpType::Ok).collect();
 
     g1a(h, &oks, &mut a);
@@ -322,7 +326,11 @@ fn duplicates(h: &History, possible: &[usize], a: &mut Analysis) {
                 a.push(Anomaly::new(
                     "duplicate-elements",
                     vec![h.ops[i].index],
-                    format!("{} read {}, which contains duplicates even though every append is unique", a.name(i), a.list(v)),
+                    format!(
+                        "{} read {}, which contains duplicates even though every append is unique",
+                        a.name(i),
+                        a.list(v)
+                    ),
                     json!({"op": a.op_json(i), "mop": mop_json(h, m),
                            "duplicates": dups.iter().map(|(e, c)| json!([a.scalar(*e), c])).collect::<Vec<_>>()}),
                 ));
@@ -490,7 +498,12 @@ impl Explain for Explainer {
                     if let Mop::Append { key, value } = m {
                         if let Some(p) = self.idx.prev(*key, *value) {
                             if self.idx.writer.get(&(*key, p)) == Some(&from) {
-                                return format!("{bn} appended {} after {an} appended {} to {}", h.show(*value), h.show(p), key_of(*key));
+                                return format!(
+                                    "{bn} appended {} after {an} appended {} to {}",
+                                    h.show(*value),
+                                    h.show(p),
+                                    key_of(*key)
+                                );
                             }
                         }
                     }
@@ -501,7 +514,11 @@ impl Explain for Explainer {
                     if let Mop::Read { key, value } = m {
                         if let Some(&last) = read_list(value).and_then(|v| v.last()) {
                             if self.idx.writer.get(&(*key, last)) == Some(&from) {
-                                return format!("{bn} observed {an}'s append of {} to key {}", h.show(last), key_of(*key));
+                                return format!(
+                                    "{bn} observed {an}'s append of {} to key {}",
+                                    h.show(last),
+                                    key_of(*key)
+                                );
                             }
                         }
                     }
@@ -518,7 +535,11 @@ impl Explain for Explainer {
                                     key_of(*key),
                                     h.show(*value)
                                 ),
-                                Some(_) => format!("{an} did not observe {bn}'s append of {} to {}", h.show(*value), key_of(*key)),
+                                Some(_) => format!(
+                                    "{an} did not observe {bn}'s append of {} to {}",
+                                    h.show(*value),
+                                    key_of(*key)
+                                ),
                             };
                         }
                     }

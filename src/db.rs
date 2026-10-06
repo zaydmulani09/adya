@@ -85,13 +85,17 @@ pub mod sqlite {
                         None
                     }
                     TxnOp::Read(k) if list => {
-                        let v: Option<String> =
-                            self.conn.query_row("SELECT v FROM adya_lists WHERE k = ?1", [k], |r| r.get(0)).optional()?;
+                        let v: Option<String> = self
+                            .conn
+                            .query_row("SELECT v FROM adya_lists WHERE k = ?1", [k], |r| r.get(0))
+                            .optional()?;
                         Some(parse_list(v.as_deref()))
                     }
                     TxnOp::Read(k) => {
-                        let v: Option<i64> =
-                            self.conn.query_row("SELECT v FROM adya_regs WHERE k = ?1", [k], |r| r.get(0)).optional()?;
+                        let v: Option<i64> = self
+                            .conn
+                            .query_row("SELECT v FROM adya_regs WHERE k = ?1", [k], |r| r.get(0))
+                            .optional()?;
                         Some(v.into_iter().collect())
                     }
                 });
@@ -377,7 +381,12 @@ pub mod exec {
             .map(|(op, m)| match op {
                 TxnOp::Read(_) => match &m[2] {
                     Json::Null => Ok(Some(vec![])),
-                    Json::Array(xs) => xs.iter().map(|x| x.as_i64().ok_or("non-integer element")).collect::<Result<_, _>>().map(Some).map_err(String::from),
+                    Json::Array(xs) => xs
+                        .iter()
+                        .map(|x| x.as_i64().ok_or("non-integer element"))
+                        .collect::<Result<_, _>>()
+                        .map(Some)
+                        .map_err(String::from),
                     x => x.as_i64().map(|v| Some(vec![v])).ok_or_else(|| format!("bad read result {x}")),
                 },
                 _ => Ok(None),

@@ -116,13 +116,31 @@ enum Cmd {
 fn main() -> ExitCode {
     let code = match Cli::parse().cmd {
         Cmd::Check { files, check } => check_files(&files, &check),
-        Cmd::Run { target, url, isolation, processes, txns, time_limit, keys, max_writes_per_key, seed, out, check } => {
+        Cmd::Run {
+            target,
+            url,
+            isolation,
+            processes,
+            txns,
+            time_limit,
+            keys,
+            max_writes_per_key,
+            seed,
+            out,
+            check,
+        } => {
             let kind = match check.model {
                 Model::ListAppend => Kind::ListAppend,
                 Model::RwRegister => Kind::RwRegister,
             };
             let gen = GenOpts { kind, key_count: keys.max(1), max_writes_per_key, ..GenOpts::default() };
-            let opts = RunOpts { processes: processes.max(1), txns, time_limit: time_limit.map(Duration::from_secs), gen, seed };
+            let opts = RunOpts {
+                processes: processes.max(1),
+                txns,
+                time_limit: time_limit.map(Duration::from_secs),
+                gen,
+                seed,
+            };
             match record(target, url, &isolation, &opts) {
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -209,7 +227,9 @@ fn check_files(files: &[PathBuf], args: &CheckArgs) -> u8 {
     };
     let mut worst = 0u8;
     for f in files {
-        let parsed = std::fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| History::parse(&t).map_err(|e| e.to_string()));
+        let parsed = std::fs::read_to_string(f)
+            .map_err(|e| e.to_string())
+            .and_then(|t| History::parse(&t).map_err(|e| e.to_string()));
         let code = match parsed {
             Err(e) => {
                 eprintln!("{}: {e}", f.display());

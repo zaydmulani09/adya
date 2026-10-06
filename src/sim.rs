@@ -99,7 +99,11 @@ struct Store {
 
 impl Store {
     fn at(&self, k: i64, ts: u64) -> State {
-        self.versions.get(&k).and_then(|vs| vs.iter().rev().find(|(t, _)| *t <= ts)).map(|(_, s)| s.clone()).unwrap_or_default()
+        self.versions
+            .get(&k)
+            .and_then(|vs| vs.iter().rev().find(|(t, _)| *t <= ts))
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default()
     }
 
     fn latest(&self, k: i64) -> State {

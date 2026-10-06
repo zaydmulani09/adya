@@ -27,8 +27,8 @@
 //! ```
 
 pub mod check;
-mod edn;
 pub mod db;
+mod edn;
 pub mod gen;
 pub mod graph;
 pub mod history;

@@ -18,8 +18,8 @@ use serde::Serialize;
 use serde_json::{json, Value as Json};
 
 use crate::graph::{
-    any_cycle, classify, edge_type, find_cycle, rel_name, CycleSpec, Graph, GraphBuilder, RwMode, Search, Step, PROCESS,
-    REALTIME, RW, WR, WW,
+    any_cycle, classify, edge_type, find_cycle, rel_name, CycleSpec, Graph, GraphBuilder, RwMode, Search, Step,
+    PROCESS, REALTIME, RW, WR, WW,
 };
 use crate::history::{History, Id, Mop, OpType, ReadValue};
 use crate::model;
@@ -192,7 +192,12 @@ pub struct Opts {
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { models: vec!["strict-serializable".into()], anomalies: vec![], timeout: Duration::from_millis(1000), wfr_keys: false }
+        Opts {
+            models: vec!["strict-serializable".into()],
+            anomalies: vec![],
+            timeout: Duration::from_millis(1000),
+            wfr_keys: false,
+        }
     }
 }
 
@@ -268,7 +273,9 @@ const CYCLE_EXISTS: [(&str, &str, u8, bool); 13] = [
 pub fn check(h: &History, workload: Workload, opts: &Opts) -> Report {
     let mut a = match workload {
         Workload::ListAppend => crate::list_append::analyze(h),
-        Workload::RwRegister => crate::rw_register::analyze_with(h, crate::rw_register::Options { wfr_keys: opts.wfr_keys }),
+        Workload::RwRegister => {
+            crate::rw_register::analyze_with(h, crate::rw_register::Options { wfr_keys: opts.wfr_keys })
+        }
     };
     let models: Vec<&str> = opts.models.iter().map(String::as_str).collect();
     let extra: Vec<&str> = opts.anomalies.iter().map(String::as_str).collect();
@@ -297,7 +304,8 @@ fn cycles(h: &History, a: &mut Analysis, opts: &Opts, reportable: &BTreeSet<Stri
         a.push(Anomaly::new(
             "empty-transaction-graph",
             vec![],
-            "no dependencies could be inferred between transactions, so the history says nothing about isolation".into(),
+            "no dependencies could be inferred between transactions, so the history says nothing about isolation"
+                .into(),
             Json::Null,
         ));
         return;
@@ -311,7 +319,8 @@ fn cycles(h: &History, a: &mut Analysis, opts: &Opts, reportable: &BTreeSet<Stri
 
 fn scc_cases(g: &Graph, scc: &[u32], specs: &[CycleSpec], present: u8, a: &mut Analysis, opts: &Opts) {
     let deadline = Instant::now() + opts.timeout;
-    let ops = |vs: &[u32], a: &Analysis| -> Vec<u64> { vs.iter().map(|&v| a.h.ops[a.op_of[v as usize]].index).collect() };
+    let ops =
+        |vs: &[u32], a: &Analysis| -> Vec<u64> { vs.iter().map(|&v| a.h.ops[a.op_of[v as usize]].index).collect() };
 
     // 1. Which models' forbidden subgraphs are cyclic?
     let mut exists: Vec<Anomaly> = Vec::new();
@@ -322,7 +331,8 @@ fn scc_cases(g: &Graph, scc: &[u32], specs: &[CycleSpec], present: u8, a: &mut A
         }
         let comps = if ext { extension_sccs(g, scc, types) } else { g.sccs(scc, |r| r & types != 0) };
         if let Some(c) = comps.first() {
-            let kinds: Vec<&str> = [WW, WR, RW, PROCESS, REALTIME].into_iter().filter(|r| types & r != 0).map(rel_name).collect();
+            let kinds: Vec<&str> =
+                [WW, WR, RW, PROCESS, REALTIME].into_iter().filter(|r| types & r != 0).map(rel_name).collect();
             let shape = if ext { format!("{} plus one rw hop", kinds.join("/")) } else { kinds.join("/") };
             exists.push(Anomaly::new(
                 &format!("{canon}-cycle-exists"),
@@ -336,8 +346,7 @@ fn scc_cases(g: &Graph, scc: &[u32], specs: &[CycleSpec], present: u8, a: &mut A
             ruled_out.extend(model::stronger_models(&[friendly]));
         }
     }
-    let possible: Vec<&str> =
-        CYCLE_EXISTS.iter().map(|c| c.1).filter(|m| !ruled_out.contains(*m)).collect();
+    let possible: Vec<&str> = CYCLE_EXISTS.iter().map(|c| c.1).filter(|m| !ruled_out.contains(*m)).collect();
     let mut skip: BTreeSet<String> = model::prohibited_by(&possible);
 
     // 2. Typed search, most severe first.
@@ -495,20 +504,21 @@ fn process_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
     }
 }
 
-fn report(mut all: BTreeMap<String, Vec<Anomaly>>, prohibited: &BTreeSet<String>, reportable: &BTreeSet<String>) -> Report {
+fn report(
+    mut all: BTreeMap<String, Vec<Anomaly>>,
+    prohibited: &BTreeSet<String>,
+    reportable: &BTreeSet<String>,
+) -> Report {
     let types: Vec<&str> = all.keys().map(String::as_str).collect();
     let (not, also_not) = model::boundary(&types);
     // Existence results are redundant next to anything that already rules
     // out the same model.
-    let concrete: Vec<&str> =
-        all.keys().filter(|t| !t.ends_with("-cycle-exists")).map(String::as_str).collect();
+    let concrete: Vec<&str> = all.keys().filter(|t| !t.ends_with("-cycle-exists")).map(String::as_str).collect();
     let impossible = model::impossible_models(&concrete);
     let redundant: Vec<String> = all
         .keys()
         .filter(|t| t.ends_with("-cycle-exists"))
-        .filter(|t| {
-            CYCLE_EXISTS.iter().any(|c| format!("{}-cycle-exists", c.0) == **t && impossible.contains(c.1))
-        })
+        .filter(|t| CYCLE_EXISTS.iter().any(|c| format!("{}-cycle-exists", c.0) == **t && impossible.contains(c.1)))
         .cloned()
         .collect();
     let mut shown = BTreeMap::new();

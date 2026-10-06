@@ -17,7 +17,17 @@ use std::collections::{BTreeSet, VecDeque};
 type Dag = &'static [(&'static str, &'static [&'static str])];
 
 const MODELS: Dag = &[
-    ("strict-serializable", &["serializable", "linearizable", "snapshot-isolation", "strong-snapshot-isolation", "strong-session-serializable", "session-serializable"]),
+    (
+        "strict-serializable",
+        &[
+            "serializable",
+            "linearizable",
+            "snapshot-isolation",
+            "strong-snapshot-isolation",
+            "strong-session-serializable",
+            "session-serializable",
+        ],
+    ),
     ("session-serializable", &["1SR"]),
     ("serializable", &["repeatable-read", "update-serializable", "snapshot-isolation", "view-serializable"]),
     ("update-serializable", &["forward-consistent-view"]),
@@ -29,7 +39,16 @@ const MODELS: Dag = &[
     ("monotonic-atomic-view", &["read-committed"]),
     ("read-committed", &["read-uncommitted"]),
     ("repeatable-read", &["cursor-stability", "monotonic-atomic-view"]),
-    ("snapshot-isolation", &["forward-consistent-view", "monotonic-atomic-view", "monotonic-snapshot-read", "parallel-snapshot-isolation", "prefix"]),
+    (
+        "snapshot-isolation",
+        &[
+            "forward-consistent-view",
+            "monotonic-atomic-view",
+            "monotonic-snapshot-read",
+            "parallel-snapshot-isolation",
+            "prefix",
+        ],
+    ),
     ("parallel-snapshot-isolation", &["causal-cerone", "update-atomic"]),
     ("prefix", &["causal-cerone"]),
     ("causal-cerone", &["read-atomic"]),
@@ -82,8 +101,14 @@ const PROSCRIBES: Dag = &[
     ("strong-session-read-committed", &["G1c-process", "strong-session-PL-2-cycle-exists"]),
     ("strong-read-uncommitted", &["G0-realtime", "strong-PL-1-cycle-exists"]),
     ("strong-read-committed", &["G1c-realtime", "strong-PL-2-cycle-exists"]),
-    ("strong-session-snapshot-isolation", &["internal", "G1-process", "G-nonadjacent-process", "strong-session-snapshot-isolation-cycle-exists"]),
-    ("strong-snapshot-isolation", &["internal", "G1-realtime", "G-nonadjacent-realtime", "strong-snapshot-isolation-cycle-exists"]),
+    (
+        "strong-session-snapshot-isolation",
+        &["internal", "G1-process", "G-nonadjacent-process", "strong-session-snapshot-isolation-cycle-exists"],
+    ),
+    (
+        "strong-snapshot-isolation",
+        &["internal", "G1-realtime", "G-nonadjacent-realtime", "strong-snapshot-isolation-cycle-exists"],
+    ),
     ("strong-session-serializable", &["G1-process", "G2-process", "strong-session-serializable-cycle-exists"]),
     ("update-serializable", &["G1", "G-update"]),
 ];
@@ -148,10 +173,7 @@ fn closure<'a>(start: impl IntoIterator<Item = &'a str>, step: impl Fn(&str) -> 
 /// Resolves aliases and checks the model is known.
 pub fn canonical(model: &str) -> Option<&'static str> {
     let m = ALIASES.iter().find(|(a, _)| *a == model).map_or(model, |(_, b)| b);
-    MODELS
-        .iter()
-        .flat_map(|(a, bs)| std::iter::once(*a).chain(bs.iter().copied()))
-        .find(|x| *x == m)
+    MODELS.iter().flat_map(|(a, bs)| std::iter::once(*a).chain(bs.iter().copied())).find(|x| *x == m)
 }
 
 /// All model names, for help text.
