@@ -28,6 +28,11 @@ pub enum Outcome {
 /// A connection that can execute one transaction at a time.
 pub trait Client: Send {
     fn txn(&mut self, ops: &[TxnOp]) -> Outcome;
+
+    /// False once the connection is unusable; the runner then reconnects.
+    fn healthy(&mut self) -> bool {
+        true
+    }
 }
 
 /// Opens a fresh client for a process.
@@ -41,12 +46,35 @@ pub struct RunOpts {
     pub time_limit: Option<Duration>,
     pub gen: GenOpts,
     pub seed: u64,
+    /// Faults to inject while the workload runs.
+    pub nemesis: Option<Nemesis>,
 }
 
 impl Default for RunOpts {
     fn default() -> RunOpts {
-        RunOpts { processes: 8, txns: 2000, time_limit: None, gen: GenOpts::default(), seed: 0 }
+        RunOpts { processes: 8, txns: 2000, time_limit: None, gen: GenOpts::default(), seed: 0, nemesis: None }
     }
+}
+
+/// Periodic fault injection through shell commands: every `every`, run
+/// `fault` (pause a container, kill a backend, cut a link...), wait
+/// `duration`, then run `heal`. Each command is recorded in the history as an
+/// `info` op on the `nemesis` process, as Jepsen does; the checker ignores
+/// them.
+#[derive(Clone, Debug)]
+pub struct Nemesis {
+    pub fault: String,
+    pub heal: String,
+    pub every: Duration,
+    pub duration: Duration,
+}
+
+/// A command run through the platform shell.
+pub fn shell(cmd: &str) -> std::process::Command {
+    let (sh, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+    let mut c = std::process::Command::new(sh);
+    c.args([flag, cmd]);
+    c
 }
 
 /// Counts of how transactions ended.
@@ -82,26 +110,40 @@ pub fn run(connect: &Connect, opts: &RunOpts) -> Result<(String, Stats), Error> 
     // Fail fast on a bad connection string rather than once per thread.
     drop(connect()?);
 
+    let done = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|s| {
+        if let Some(n) = &opts.nemesis {
+            let (shared, done) = (&shared, &done);
+            s.spawn(move || nemesis(n, shared, done, start));
+        }
+        let mut clients = Vec::new();
         for p in 0..opts.processes {
             let shared = &shared;
-            s.spawn(move || {
+            clients.push(s.spawn(move || {
                 let mut pid = p;
                 let mut client = None;
                 loop {
                     if deadline.is_some_and(|d| Instant::now() > d) {
                         return;
                     }
-                    let c = match client.as_mut() {
-                        Some(c) => c,
-                        None => match connect() {
-                            Ok(c) => client.insert(c),
-                            Err(e) => {
-                                shared.lock().unwrap().last_error = Some(e.to_string());
-                                return;
+                    if client.is_none() {
+                        // Retry for a while: the database may be restarting.
+                        let give_up = Instant::now() + Duration::from_secs(30);
+                        loop {
+                            match connect() {
+                                Ok(c) => {
+                                    client = Some(c);
+                                    break;
+                                }
+                                Err(e) if Instant::now() > give_up => {
+                                    shared.lock().unwrap().last_error = Some(e.to_string());
+                                    return;
+                                }
+                                Err(_) => std::thread::sleep(Duration::from_millis(250)),
                             }
-                        },
-                    };
+                        }
+                    }
+                    let c = client.as_mut().unwrap();
                     let ops = {
                         let mut sh = shared.lock().unwrap();
                         if sh.started >= opts.txns {
@@ -139,10 +181,16 @@ pub fn run(connect: &Connect, opts: &RunOpts) -> Result<(String, Stats), Error> 
                     if matches!(outcome, Outcome::Info(_)) {
                         pid += opts.processes;
                         client = None;
+                    } else if matches!(outcome, Outcome::Fail(_)) && !c.healthy() {
+                        client = None;
                     }
                 }
-            });
+            }));
         }
+        for c in clients {
+            let _ = c.join();
+        }
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
     });
     let sh = shared.into_inner().unwrap();
     if sh.stats.ok == 0 {
@@ -152,6 +200,40 @@ pub fn run(connect: &Connect, opts: &RunOpts) -> Result<(String, Stats), Error> 
         )));
     }
     Ok((sh.history, sh.stats))
+}
+
+fn nemesis(n: &Nemesis, shared: &Mutex<Shared>, done: &std::sync::atomic::AtomicBool, start: Instant) {
+    use std::sync::atomic::Ordering;
+    // Sleeps up to `d`, waking early when the workload finishes.
+    let nap = |d: Duration| {
+        let until = Instant::now() + d;
+        while Instant::now() < until && !done.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(50).min(until - Instant::now()));
+        }
+    };
+    let record = |f: &str, cmd: &str, ok: bool| {
+        let mut sh = shared.lock().unwrap();
+        let line = format!(
+            "{{\"index\":{},\"type\":\"info\",\"f\":\"{f}\",\"process\":\"nemesis\",\"time\":{},\"value\":{}}}
+",
+            sh.index,
+            nanos(start),
+            serde_json::json!({ "cmd": cmd, "ok": ok })
+        );
+        sh.history.push_str(&line);
+        sh.index += 1;
+    };
+    loop {
+        nap(n.every);
+        if done.load(Ordering::SeqCst) {
+            return;
+        }
+        let ok = shell(&n.fault).stdout(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+        record("start-fault", &n.fault, ok);
+        nap(n.duration);
+        let ok = shell(&n.heal).stdout(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+        record("stop-fault", &n.heal, ok);
+    }
 }
 
 fn nanos(start: Instant) -> u64 {

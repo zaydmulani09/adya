@@ -117,6 +117,18 @@ enum Cmd {
         max_writes_per_key: u64,
         #[arg(long, default_value_t = 0)]
         seed: u64,
+        /// Shell command that injects a fault, e.g. "docker pause pg".
+        #[arg(long, requires = "heal")]
+        fault: Option<String>,
+        /// Shell command that heals it, e.g. "docker unpause pg".
+        #[arg(long, requires = "fault")]
+        heal: Option<String>,
+        /// Seconds between faults.
+        #[arg(long, default_value_t = 10)]
+        fault_every: u64,
+        /// Seconds each fault lasts before healing.
+        #[arg(long, default_value_t = 5)]
+        fault_for: u64,
         /// Where to write the history.
         #[arg(short, long, default_value = "history.jsonl")]
         out: PathBuf,
@@ -138,6 +150,10 @@ fn main() -> ExitCode {
             keys,
             max_writes_per_key,
             seed,
+            fault,
+            heal,
+            fault_every,
+            fault_for,
             out,
             check,
         } => {
@@ -152,6 +168,12 @@ fn main() -> ExitCode {
                 time_limit: time_limit.map(Duration::from_secs),
                 gen,
                 seed,
+                nemesis: fault.zip(heal).map(|(fault, heal)| adya::run::Nemesis {
+                    fault,
+                    heal,
+                    every: Duration::from_secs(fault_every),
+                    duration: Duration::from_secs(fault_for),
+                }),
             };
             match record(target, url, &isolation, &opts) {
                 Err(e) => {

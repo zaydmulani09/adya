@@ -166,6 +166,10 @@ pub mod postgres {
     }
 
     impl Client for Postgres {
+        fn healthy(&mut self) -> bool {
+            !self.conn.is_closed()
+        }
+
         fn txn(&mut self, ops: &[TxnOp]) -> Outcome {
             let list = self.list;
             let begin = self.begin.clone();
@@ -236,6 +240,8 @@ pub mod mysql {
     pub struct Mysql {
         conn: Conn,
         list: bool,
+        /// Set after a client-side (I/O, protocol) error.
+        broken: bool,
     }
 
     fn open(url: &str) -> Result<Conn, Error> {
@@ -256,7 +262,7 @@ pub mod mysql {
     pub fn connect(url: &str, level: &str, list: bool) -> Result<Box<dyn Client>, Error> {
         let mut conn = open(url)?;
         conn.query_drop(format!("SET SESSION TRANSACTION ISOLATION LEVEL {}", level_sql(level)?)).map_err(err)?;
-        Ok(Box::new(Mysql { conn, list }))
+        Ok(Box::new(Mysql { conn, list, broken: false }))
     }
 
     fn err(e: ::mysql::Error) -> Error {
@@ -264,6 +270,10 @@ pub mod mysql {
     }
 
     impl Client for Mysql {
+        fn healthy(&mut self) -> bool {
+            !self.broken
+        }
+
         fn txn(&mut self, ops: &[TxnOp]) -> Outcome {
             let list = self.list;
             let body = |c: &mut Conn| -> Result<Vec<Option<Vec<i64>>>, ::mysql::Error> {
@@ -297,6 +307,7 @@ pub mod mysql {
             let reads = match body(&mut self.conn) {
                 Ok(r) => r,
                 Err(e) => {
+                    self.broken = !matches!(e, ::mysql::Error::MySqlError(_));
                     let _ = self.conn.query_drop("ROLLBACK");
                     return Outcome::Fail(e.to_string());
                 }
@@ -325,7 +336,7 @@ pub mod mysql {
 pub mod exec {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
-    use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+    use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
     use serde_json::{json, Value as Json};
 
@@ -343,15 +354,7 @@ pub mod exec {
     }
 
     pub fn connect(cmd: &str) -> Result<Box<dyn Client>, Error> {
-        let mut c = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.args(["/C", cmd]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", cmd]);
-            c
-        };
+        let mut c = crate::run::shell(cmd);
         let mut child = c
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
