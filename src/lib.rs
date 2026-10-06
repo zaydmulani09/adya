@@ -6,6 +6,7 @@
 //! cycles that each isolation level forbids.
 
 pub mod history;
+pub mod model;
 
 use std::fmt;
 
