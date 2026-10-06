@@ -167,6 +167,21 @@ pub fn prohibited_by(models: &[&str]) -> BTreeSet<String> {
     closure(direct, |a| inbound(IMPLIED, a))
 }
 
+/// Anomalies which imply any of the given ones (inclusive).
+pub fn implying(anomalies: &[&str]) -> BTreeSet<String> {
+    closure(anomalies.iter().copied(), |a| inbound(IMPLIED, a))
+}
+
+/// Models implied by the given ones (inclusive).
+pub fn implied_models(models: &[&str]) -> BTreeSet<String> {
+    closure(models.iter().copied(), |m| out(MODELS, m))
+}
+
+/// Models ruled out once the given models are known not to hold (inclusive).
+pub fn stronger_models(models: &[&str]) -> BTreeSet<String> {
+    closure(models.iter().copied(), |m| inbound(MODELS, m))
+}
+
 /// Anomalies implied by the given ones (inclusive).
 pub fn implied(anomalies: &[&str]) -> BTreeSet<String> {
     closure(anomalies.iter().copied(), |a| out(IMPLIED, a))

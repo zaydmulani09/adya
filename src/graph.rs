@@ -325,6 +325,34 @@ pub fn find_cycle(g: &Graph, scc: &[u32], spec: &CycleSpec, deadline: Instant) -
     Search::NotFound
 }
 
+/// Some shortest cycle through `scc[0]`, ignoring edge types. Every
+/// nontrivial SCC has one; this is the fallback when a typed search times out.
+pub fn any_cycle(g: &Graph, scc: &[u32]) -> Vec<Step> {
+    let local: HashMap<u32, usize> = scc.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+    let mut parent: Vec<Option<(usize, u8)>> = vec![None; scc.len()];
+    let mut queue = std::collections::VecDeque::from([0usize]);
+    while let Some(v) = queue.pop_front() {
+        for &(w, rels) in &g.adj[scc[v] as usize] {
+            let Some(&w) = local.get(&w) else { continue };
+            if w == 0 {
+                let mut steps = vec![Step { from: scc[v], rel: edge_type(rels) }];
+                let mut x = v;
+                while let Some((p, rel)) = parent[x] {
+                    steps.push(Step { from: scc[p], rel });
+                    x = p;
+                }
+                steps.reverse();
+                return steps;
+            }
+            if parent[w].is_none() {
+                parent[w] = Some((v, edge_type(rels)));
+                queue.push_back(w);
+            }
+        }
+    }
+    Vec::new()
+}
+
 fn unwind(scc: &[u32], start: usize, last: usize, closing: u8, parent: &[u32], via: &[u8]) -> Vec<Step> {
     // Walk back from the last state; each state's vertex was entered via `via`.
     let mut rev = vec![Step { from: scc[last / STATES], rel: closing }];

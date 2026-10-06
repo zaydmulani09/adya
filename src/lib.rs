@@ -4,10 +4,37 @@
 //! dependency graph between them (Adya's write-write, write-read and
 //! read-write edges, plus process and real-time order), then hunts for the
 //! cycles that each isolation level forbids.
+//!
+//! ```
+//! use adya::{check, History, Opts, Valid, Workload};
+//!
+//! // Two transactions each read both keys as empty, then append to a
+//! // different one: write skew, legal under snapshot isolation only.
+//! let h = History::from_json(r#"
+//! {"type":"invoke","process":0,"value":[["r","x",null],["r","y",null],["append","x",1]]}
+//! {"type":"invoke","process":1,"value":[["r","x",null],["r","y",null],["append","y",1]]}
+//! {"type":"ok","process":0,"value":[["r","x",[]],["r","y",[]],["append","x",1]]}
+//! {"type":"ok","process":1,"value":[["r","x",[]],["r","y",[]],["append","y",1]]}
+//! "#).unwrap();
+//!
+//! let serializable = Opts { models: vec!["serializable".into()], ..Opts::default() };
+//! let r = check(&h, Workload::ListAppend, &serializable);
+//! assert_eq!(r.valid, Valid::False);
+//! assert_eq!(r.anomaly_types, ["G2-item"]);
+//!
+//! let si = Opts { models: vec!["snapshot-isolation".into()], ..Opts::default() };
+//! assert_eq!(check(&h, Workload::ListAppend, &si).valid, Valid::True);
+//! ```
 
+pub mod check;
 pub mod graph;
 pub mod history;
+pub mod list_append;
 pub mod model;
+pub mod rw_register;
+
+pub use check::{check, Anomaly, Opts, Report, Valid, Workload};
+pub use history::History;
 
 use std::fmt;
 
