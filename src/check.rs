@@ -188,6 +188,15 @@ pub struct Opts {
     pub timeout: Duration,
     /// rw-register only: assume writes follow reads within a transaction.
     pub wfr_keys: bool,
+    /// rw-register only: assume each key is sequentially consistent, and
+    /// derive version order from process order.
+    pub sequential_keys: bool,
+    /// rw-register only: assume each key is linearizable, and derive version
+    /// order from real-time order.
+    pub linearizable_keys: bool,
+    /// rw-register only: the database's own commit order, as completion op
+    /// index -> position.
+    pub transaction_order: Option<HashMap<u64, i64>>,
 }
 
 impl Default for Opts {
@@ -197,6 +206,9 @@ impl Default for Opts {
             anomalies: vec![],
             timeout: Duration::from_millis(1000),
             wfr_keys: false,
+            sequential_keys: false,
+            linearizable_keys: false,
+            transaction_order: None,
         }
     }
 }
@@ -273,9 +285,15 @@ const CYCLE_EXISTS: [(&str, &str, u8, bool); 13] = [
 pub fn check(h: &History, workload: Workload, opts: &Opts) -> Report {
     let mut a = match workload {
         Workload::ListAppend => crate::list_append::analyze(h),
-        Workload::RwRegister => {
-            crate::rw_register::analyze_with(h, crate::rw_register::Options { wfr_keys: opts.wfr_keys })
-        }
+        Workload::RwRegister => crate::rw_register::analyze_with(
+            h,
+            crate::rw_register::Options {
+                wfr_keys: opts.wfr_keys,
+                sequential_keys: opts.sequential_keys,
+                linearizable_keys: opts.linearizable_keys,
+                transaction_order: opts.transaction_order.clone(),
+            },
+        ),
     };
     let models: Vec<&str> = opts.models.iter().map(String::as_str).collect();
     let extra: Vec<&str> = opts.anomalies.iter().map(String::as_str).collect();
@@ -461,10 +479,12 @@ fn cycle_anomaly(a: &Analysis, kind: &str, steps: &[Step]) -> Anomaly {
     Anomaly::new(kind, pos.iter().map(|&p| a.h.ops[p].index).collect(), text, json!({ "steps": detail }))
 }
 
-/// Links each completed op to ops invoked after it completed. Like Elle, this
-/// keeps only a transitive reduction: a frontier of completions not already
-/// implied by a later one.
-fn realtime_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
+/// Real-time order as `(earlier, later)` op positions: each completed op
+/// precedes ops invoked after it completed. Like Elle, only a transitive
+/// reduction is kept: a frontier of completions not already implied by a
+/// later one.
+pub(crate) fn realtime_order(h: &History) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
     let mut frontier: Vec<usize> = Vec::new();
     let mut preceded_by: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, op) in h.ops.iter().enumerate() {
@@ -472,10 +492,7 @@ fn realtime_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
             OpType::Invoke => {
                 let Some(c) = h.pair[i] else { continue };
                 if matches!(h.ops[c].kind, OpType::Ok | OpType::Info) {
-                    for &f in &frontier {
-                        let (fv, cv) = (a.vertex(f), a.vertex(c));
-                        g.link(fv, cv, REALTIME);
-                    }
+                    out.extend(frontier.iter().map(|&f| (f, c)));
                     preceded_by.insert(c, frontier.clone());
                 }
             }
@@ -488,9 +505,13 @@ fn realtime_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
             _ => {}
         }
     }
+    out
 }
 
-fn process_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
+/// Process order as `(earlier, later)` op positions: successive committed
+/// ops of each process.
+pub(crate) fn process_order(h: &History) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
     let mut last: HashMap<i64, usize> = HashMap::new();
     for (i, op) in h.ops.iter().enumerate() {
         if op.kind != OpType::Ok {
@@ -498,9 +519,23 @@ fn process_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
         }
         let Some(p) = op.process else { continue };
         if let Some(prev) = last.insert(p, i) {
-            let (pv, iv) = (a.vertex(prev), a.vertex(i));
-            g.link(pv, iv, PROCESS);
+            out.push((prev, i));
         }
+    }
+    out
+}
+
+fn realtime_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
+    for (f, c) in realtime_order(h) {
+        let (fv, cv) = (a.vertex(f), a.vertex(c));
+        g.link(fv, cv, REALTIME);
+    }
+}
+
+fn process_edges(h: &History, a: &mut Analysis, g: &mut GraphBuilder) {
+    for (f, c) in process_order(h) {
+        let (fv, cv) = (a.vertex(f), a.vertex(c));
+        g.link(fv, cv, PROCESS);
     }
 }
 
