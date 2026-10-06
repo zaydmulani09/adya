@@ -49,12 +49,15 @@ def main():
         iso = ISOLATIONS[n % len(ISOLATIONS)]
         workload = "rw-register" if n % 4 == 3 else "list-append"
         model = MODELS[(n // len(ISOLATIONS)) % len(MODELS)]
-        path = tmp / f"h{n}.jsonl"
+        path = tmp / f"h{n}.json"
         subprocess.run(
             [binary, "run", "sim", "-i", iso, "-m", workload, "-n", "300", "-p", "5", "--keys", "5",
              "--seed", str(n), "-o", str(path)],
             capture_output=True,
         )
+        # elle-cli wants a JSON array; adya reads either form.
+        ops = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        path.write_text(json.dumps(ops))
         e = elle(jar, workload, model, path)
         a = adya(binary, workload, model, path)
         want = (e.get("valid?"), sorted(e.get("anomaly-types", [])), norm(e.get("not", [])))
