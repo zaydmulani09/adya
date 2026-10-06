@@ -322,13 +322,22 @@ fn print(f: &Path, r: &Report, json: bool) {
         Valid::Unknown => "unknown",
     };
     let _ = writeln!(o, "{}\t{v}", f.display());
+    // A few examples of each kind are enough to act on; --json has them all.
+    const SHOWN: usize = 3;
     for (kind, list) in &r.anomalies {
-        for (i, a) in list.iter().enumerate() {
+        for (i, a) in list.iter().take(SHOWN).enumerate() {
             let _ = writeln!(o, "\n{kind} #{i}");
             for line in a.explanation.lines() {
                 let _ = writeln!(o, "  {line}");
             }
         }
+        if list.len() > SHOWN {
+            let _ = writeln!(o, "\n... and {} more {kind} (see --json)", list.len() - SHOWN);
+        }
+    }
+    if !r.anomalies.is_empty() {
+        let counts: Vec<String> = r.anomalies.iter().map(|(k, v)| format!("{} {k}", v.len())).collect();
+        let _ = writeln!(o, "\nFound {}.", counts.join(", "));
     }
     if !r.not.is_empty() {
         let _ = writeln!(o, "\nNot {}.", r.not.join(", "));
