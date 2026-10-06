@@ -68,7 +68,7 @@ enum Cmd {
     /// Check histories. Exit status: 0 valid, 1 anomalies found, 2 unknown,
     /// 3 error.
     Check {
-        /// History files (JSON lines or a JSON array, as elle-cli reads).
+        /// History files: JSON lines, a JSON array, or Jepsen EDN.
         #[arg(required = true)]
         files: Vec<PathBuf>,
         #[command(flatten)]
@@ -209,7 +209,7 @@ fn check_files(files: &[PathBuf], args: &CheckArgs) -> u8 {
     };
     let mut worst = 0u8;
     for f in files {
-        let parsed = std::fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| History::from_json(&t).map_err(|e| e.to_string()));
+        let parsed = std::fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| History::parse(&t).map_err(|e| e.to_string()));
         let code = match parsed {
             Err(e) => {
                 eprintln!("{}: {e}", f.display());

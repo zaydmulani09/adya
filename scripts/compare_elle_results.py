@@ -49,6 +49,8 @@ def main():
     for result in sorted(data.glob("*-result.json")):
         case = result.name[: -len("-result.json")]
         history = data / f"{case}.json"
+        if not history.exists():
+            history = data / f"{case}.edn"
         workload = "rw-register" if case.startswith("rw-register") else "list-append"
         if not case.startswith(("list-append", "rw-register")) or not history.exists():
             continue
