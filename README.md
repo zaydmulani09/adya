@@ -273,7 +273,13 @@ The checker is held to three independent standards in CI:
   (`scripts/compare_elle_results.py`).
 * **Elle itself, live.** On every push, CI generates random histories across
   isolation levels and workloads, and checks each one with both adya and the
-  JVM Elle (`scripts/differential.py`).
+  JVM Elle (`scripts/differential.py`). In the first full run, 40
+  histories of 300 transactions each: every one of the 34 that Elle
+  finished got an identical answer from adya. Elle could not finish the
+  other six: five hit the 5-minute limit and one exhausted a 6 GB heap,
+  all from the read-uncommitted and broken-snapshot simulations, whose
+  histories are dense with anomalies. adya checked all 40 in 0.2 seconds
+  in total.
 * **Databases with known answers.** The simulated database implements
   serializable, snapshot isolation, read committed (with write locks), read
   uncommitted, and a broken snapshot mode. Tests assert, over thousands of
