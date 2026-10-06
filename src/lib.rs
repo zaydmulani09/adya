@@ -27,11 +27,13 @@
 //! ```
 
 pub mod check;
+pub mod gen;
 pub mod graph;
 pub mod history;
 pub mod list_append;
 pub mod model;
 pub mod rw_register;
+pub mod sim;
 
 pub use check::{check, Anomaly, Opts, Report, Valid, Workload};
 pub use history::History;
