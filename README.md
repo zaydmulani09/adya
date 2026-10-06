@@ -112,8 +112,11 @@ completion on a process:
   appends before it, so adya can recover the full version order.
 * **rw-register** micro-ops are `["w", key, value]` and `["r", key, value]`.
   Registers hide their history, so far less can be inferred. adya knows the
-  initial `nil` precedes everything, and with `--wfr-keys` assumes a
-  transaction's writes follow its reads.
+  initial `nil` precedes everything; you can let it assume more:
+  `--wfr-keys` (a transaction's writes follow its reads),
+  `--sequential-keys` (process order implies version order),
+  `--linearizable-keys` (real-time order does), or hand it the database's own
+  commit order with `--transaction-order order.json`.
 
 Consistency models include `strict-serializable` (default), `serializable`,
 `snapshot-isolation`, `repeatable-read`, `read-committed`,
@@ -137,6 +140,29 @@ keys. Appends are upserts that concatenate onto a text column. Errors before
 recorded as indeterminate, and that client reconnects under a new process id,
 as in Jepsen. The history is written to `history.jsonl` (`-o` to change it)
 and checked against `-c`.
+
+### What it finds
+
+CI runs `scripts/databases.sh` against Postgres 17 and MySQL 8.4 on every
+push: 4,000 transactions from 10 clients over 6 hot keys, per isolation level
+and workload, each history checked against a ladder of models. Cells list the
+anomaly types found, or "valid". From one run (list-append workload):
+
+| database, level | serializable | snapshot isolation | repeatable read | read committed |
+|---|---|---|---|---|
+| Postgres `READ COMMITTED` | G-single-item, G2-item, internal, lost-update | G-single-item, internal, lost-update | G-single-item, G2-item, lost-update | valid |
+| Postgres `REPEATABLE READ` | G2-item | valid | G2-item | valid |
+| Postgres `SERIALIZABLE` | valid | valid | valid | valid |
+| MySQL `READ COMMITTED` | G-single-item, G2-item, internal, lost-update | G-single-item, internal, lost-update | G-single-item, G2-item, lost-update | valid |
+| MySQL `REPEATABLE READ` | G-single-item, G2-item, internal, lost-update | G-single-item, internal, lost-update | G-single-item, G2-item, lost-update | valid |
+| MySQL `SERIALIZABLE` | valid | valid | valid | valid |
+
+Postgres behaves as documented: its `REPEATABLE READ` is snapshot isolation,
+which permits write skew (G2-item), and its `SERIALIZABLE` came out strict
+serializable. MySQL's `REPEATABLE READ` is another story: it permits lost
+updates and read skew, so it is not snapshot isolation, nor even repeatable
+read in Adya's sense. Jepsen reported the same of MySQL 8.0.34 in 2023; adya
+reproduces it from a clean start in a few seconds.
 
 ### Any other database: `adya run exec`
 
@@ -221,10 +247,9 @@ test a database from Rust.
 The checker is held to three independent standards in CI:
 
 * **Elle's expected results.** elle-cli ships histories with the verdicts Elle
-  produced for them. adya matches all 50 that use features it supports, on
-  verdict, anomaly types *and* the weakest models ruled out
-  (`scripts/compare_elle_results.py`). Six cases use version-order inference
-  adya doesn't implement yet (see Limitations).
+  produced for them. adya matches all 56 list-append and rw-register cases
+  on verdict, anomaly types *and* the weakest models ruled out
+  (`scripts/compare_elle_results.py`).
 * **Elle itself, live.** On every push, CI generates random histories across
   isolation levels and workloads, and checks each one with both adya and the
   JVM Elle (`scripts/differential.py`).
@@ -237,15 +262,15 @@ The checker is held to three independent standards in CI:
 
 ## Limitations
 
-* rw-register version inference covers the initial state and
-  writes-follow-reads. Elle's `sequential-keys`, `linearizable-keys` and
-  `transaction-order` sources are not implemented yet.
 * Predicate workloads (and so the predicate variants G2/G-single proper, as
   opposed to the item variants) and Elle's other checkers (bank, set, long
   fork, counters) are out of scope for now.
 * No graph rendering. Each anomaly comes with a textual proof and JSON detail
   instead of Graphviz plots.
 * The SQL drivers connect without TLS.
+* `--sequential-keys` / `--linearizable-keys` walk forward from every
+  transaction for every key it touched; on very long histories where keys
+  go cold this is quadratic.
 * A clean result means no anomaly was observed in this history. It is not a
   proof that the database is correct. Run longer, with more contention
   (fewer `--keys`), and with faults.
@@ -254,7 +279,7 @@ The checker is held to three independent standards in CI:
 
 * Fault injection during `adya run`: kill and pause clients and servers,
   partition through a proxy.
-* The remaining rw-register version sources, then predicate reads.
+* Predicate reads (G2 and G-single proper).
 * A linearizability checker for single-object histories.
 * `--directory` output with per-anomaly files and DOT graphs, as in Elle.
 
