@@ -86,6 +86,12 @@ jobs:
         run: bash scripts/databases.sh postgres "$PG"
       - name: MySQL
         run: bash scripts/databases.sh mysql "$MY"
+      - name: Postgres SERIALIZABLE while being restarted
+        run: |
+          pg=$(docker ps -q --filter ancestor=postgres:17)
+          target/release/adya run postgres --url "$PG" -i serializable -n 6000 -p 10 --keys 6             --fault "docker restart -t 0 $pg" --heal "true" --fault-every 3 --fault-for 1             -c strict-serializable -o out/postgres-restarts.jsonl | head -20
+          test "${PIPESTATUS[0]}" -eq 0
+          echo "faults: $(grep -c start-fault out/postgres-restarts.jsonl), indeterminate: $(grep -c '"type":"info","f":"txn"' out/postgres-restarts.jsonl)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
