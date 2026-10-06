@@ -52,10 +52,18 @@ fn externals(mops: &[Mop]) -> Externals {
     (reads, writes)
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Options {
     /// Assume writes follow reads within a transaction.
     pub wfr_keys: bool,
+    /// Assume each key is sequentially consistent: process order implies
+    /// version order.
+    pub sequential_keys: bool,
+    /// Assume each key is linearizable: real-time order implies version order.
+    pub linearizable_keys: bool,
+    /// White-box commit order: completion op index -> position in the
+    /// database's own serialization order.
+    pub transaction_order: Option<HashMap<u64, i64>>,
 }
 
 pub fn analyze(h: &History) -> Analysis<'_> {
@@ -131,6 +139,26 @@ pub fn analyze_with(h: &History, opts: Options) -> Analysis<'_> {
         }
     }
     add_source(h, &mut a, &mut versions, initial, "initial-state");
+    if let Some(order) = &opts.transaction_order {
+        // Each key's writes, sorted by their transaction's position.
+        let mut writes: BTreeMap<Id, Vec<(Option<i64>, usize, Id)>> = BTreeMap::new();
+        for (&i, (_, w)) in &ext {
+            if h.ops[i].kind == OpType::Fail {
+                continue;
+            }
+            for (k, v) in w {
+                writes.entry(*k).or_default().push((order.get(&h.ops[i].index).copied(), i, *v));
+            }
+        }
+        let mut chain: BTreeMap<Id, HashSet<(Val, Val)>> = BTreeMap::new();
+        for (k, mut ws) in writes {
+            ws.sort_unstable();
+            for pair in ws.windows(2) {
+                chain.entry(k).or_default().insert((Some(pair[0].2), Some(pair[1].2)));
+            }
+        }
+        add_source(h, &mut a, &mut versions, chain, "transaction-order");
+    }
     if opts.wfr_keys {
         let mut wfr: BTreeMap<Id, HashSet<(Val, Val)>> = BTreeMap::new();
         for &i in &oks {
@@ -142,6 +170,14 @@ pub fn analyze_with(h: &History, opts: Options) -> Analysis<'_> {
             }
         }
         add_source(h, &mut a, &mut versions, wfr, "wfr-keys");
+    }
+    if opts.sequential_keys {
+        let order = order_versions(h, &ext, &crate::check::process_order(h));
+        add_source(h, &mut a, &mut versions, order, "sequential-keys");
+    }
+    if opts.linearizable_keys {
+        let order = order_versions(h, &ext, &crate::check::realtime_order(h));
+        add_source(h, &mut a, &mut versions, order, "linearizable-keys");
     }
 
     let mut g = GraphBuilder::default();
@@ -182,6 +218,68 @@ pub fn analyze_with(h: &History, opts: Options) -> Analysis<'_> {
     a.data = Some(g);
     a.explainer = Some(Box::new(Explainer { versions, ext }));
     a
+}
+
+/// Version order implied by a transaction order, assuming that if T1 < T2
+/// then whatever T1 last saw or wrote of a key precedes whatever T2 first saw
+/// or wrote of it. From each transaction we walk forward through transactions
+/// that never touched the key, stopping at the first ones that did.
+fn order_versions(
+    h: &History,
+    ext: &HashMap<usize, Externals>,
+    order: &[(usize, usize)],
+) -> BTreeMap<Id, HashSet<(Val, Val)>> {
+    let mut succ: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &(a, b) in order {
+        succ.entry(a).or_default().push(b);
+    }
+    // What a transaction last / first knew of a key. Crashed transactions
+    // only tell us about their writes.
+    let last = |i: usize, k: Id| -> Option<Val> {
+        let (r, w) = &ext[&i];
+        match h.ops[i].kind {
+            OpType::Ok => w.get(&k).map(|v| Some(*v)).or_else(|| r.get(&k).copied()),
+            OpType::Info => w.get(&k).map(|v| Some(*v)),
+            _ => None,
+        }
+    };
+    let first = |i: usize, k: Id| -> Option<Val> {
+        let (r, w) = &ext[&i];
+        match h.ops[i].kind {
+            OpType::Ok => r.get(&k).copied().or_else(|| w.get(&k).map(|v| Some(*v))),
+            OpType::Info => w.get(&k).map(|v| Some(*v)),
+            _ => None,
+        }
+    };
+    let mut out: BTreeMap<Id, HashSet<(Val, Val)>> = BTreeMap::new();
+    let mut starts: Vec<usize> = ext.keys().copied().filter(|i| succ.contains_key(i)).collect();
+    starts.sort_unstable();
+    for a in starts {
+        let (r, w) = &ext[&a];
+        let keys: std::collections::BTreeSet<Id> = r.keys().chain(w.keys()).copied().collect();
+        for k in keys {
+            let Some(v1) = last(a, k) else { continue };
+            // ponytail: one walk per (txn, key); quadratic on long stretches
+            // where nobody touches the key. Compress the graph per key if
+            // that ever matters.
+            let mut seen: HashSet<usize> = HashSet::new();
+            let mut stack: Vec<usize> = succ.get(&a).cloned().unwrap_or_default();
+            while let Some(b) = stack.pop() {
+                if !seen.insert(b) {
+                    continue;
+                }
+                match first(b, k) {
+                    Some(v2) => {
+                        if v2 != v1 {
+                            out.entry(k).or_default().insert((v1, v2));
+                        }
+                    }
+                    None => stack.extend(succ.get(&b).into_iter().flatten().copied()),
+                }
+            }
+        }
+    }
+    out
 }
 
 fn add_source(

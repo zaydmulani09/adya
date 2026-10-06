@@ -47,6 +47,18 @@ struct CheckArgs {
     /// rw-register: assume writes follow reads within a transaction.
     #[arg(long)]
     wfr_keys: bool,
+    /// rw-register: assume each key is sequentially consistent (process
+    /// order implies version order).
+    #[arg(long)]
+    sequential_keys: bool,
+    /// rw-register: assume each key is linearizable (real-time order implies
+    /// version order).
+    #[arg(long)]
+    linearizable_keys: bool,
+    /// rw-register: a JSON file mapping completion op indices to the
+    /// database's own commit order, e.g. {"1": 0, "3": 1}.
+    #[arg(long, value_name = "FILE")]
+    transaction_order: Option<PathBuf>,
     /// Print the full report as JSON.
     #[arg(long)]
     json: bool,
@@ -220,11 +232,34 @@ fn check_files(files: &[PathBuf], args: &CheckArgs) -> u8 {
             }
         }
     }
+    let transaction_order = match &args.transaction_order {
+        None => None,
+        Some(p) => {
+            let parsed = std::fs::read_to_string(p)
+                .map_err(|e| e.to_string())
+                .and_then(|t| {
+                    serde_json::from_str::<std::collections::HashMap<String, i64>>(&t).map_err(|e| e.to_string())
+                })
+                .and_then(|m| {
+                    m.into_iter().map(|(k, v)| k.parse::<u64>().map(|k| (k, v)).map_err(|e| e.to_string())).collect()
+                });
+            match parsed {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    eprintln!("{}: {e}", p.display());
+                    return 3;
+                }
+            }
+        }
+    };
     let opts = Opts {
+        transaction_order,
         models,
         anomalies: args.anomalies.clone(),
         timeout: Duration::from_millis(args.timeout_ms),
         wfr_keys: args.wfr_keys,
+        sequential_keys: args.sequential_keys,
+        linearizable_keys: args.linearizable_keys,
     };
     let mut worst = 0u8;
     for f in files {
