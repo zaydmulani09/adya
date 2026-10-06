@@ -164,6 +164,25 @@ updates and read skew, so it is not snapshot isolation, nor even repeatable
 read in Adya's sense. Jepsen reported the same of MySQL 8.0.34 in 2023; adya
 reproduces it from a clean start in a few seconds.
 
+### Faults
+
+Isolation bugs often hide in failure paths, so `adya run` can break things
+while it works. Give it a command that injects a fault and one that heals
+it; a nemesis thread runs them on a schedule and records each in the history,
+as Jepsen does:
+
+```bash
+adya run postgres --url "$PG" -i serializable -n 6000 -p 10 \
+  --fault "docker restart -t 0 pg" --heal "true" --fault-every 3 --fault-for 1
+```
+
+Anything a shell can do works: `docker pause`/`unpause`, `kill -STOP`,
+`pg_terminate_backend`, `iptables`, `tc netem`, a toxiproxy toggle. Clients
+replace dead connections and retry connecting for up to 30 seconds, so a
+restarting database doesn't end the run. In CI, Postgres `SERIALIZABLE`
+restarted nine times during a 6,000-transaction run (2,957 committed, 3,043
+failed or aborted) still checks as strict serializable.
+
 ### Any other database: `adya run exec`
 
 ```bash
@@ -187,6 +206,8 @@ The client runs it as one transaction and answers with one line:
 
 Use `fail` only when the transaction certainly did not commit. For
 rw-register workloads (`-m rw-register`) reads return a number or `null`.
+[`examples/exec_sqlite.py`](examples/exec_sqlite.py) is a complete client in
+about 60 lines of Python; CI runs it on every push.
 
 ## Using the library
 
@@ -277,8 +298,8 @@ The checker is held to three independent standards in CI:
 
 ## Roadmap
 
-* Fault injection during `adya run`: kill and pause clients and servers,
-  partition through a proxy.
+* Built-in nemeses (client kills, a partitioning proxy) on top of the
+  command-driven ones.
 * Predicate reads (G2 and G-single proper).
 * A linearizability checker for single-object histories.
 * `--directory` output with per-anomaly files and DOT graphs, as in Elle.
