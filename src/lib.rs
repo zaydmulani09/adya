@@ -27,6 +27,7 @@
 //! ```
 
 pub mod check;
+pub mod db;
 pub mod gen;
 pub mod graph;
 pub mod history;

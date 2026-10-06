@@ -1,3 +1,4 @@
 /target
 /out
-*.jsonl.tmp
+*.sqlite*
+history.jsonl
