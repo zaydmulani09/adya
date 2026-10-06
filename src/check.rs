@@ -186,11 +186,13 @@ pub struct Opts {
     pub anomalies: Vec<String>,
     /// Budget for cycle search in each strongly connected component.
     pub timeout: Duration,
+    /// rw-register only: assume writes follow reads within a transaction.
+    pub wfr_keys: bool,
 }
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { models: vec!["strict-serializable".into()], anomalies: vec![], timeout: Duration::from_millis(1000) }
+        Opts { models: vec!["strict-serializable".into()], anomalies: vec![], timeout: Duration::from_millis(1000), wfr_keys: false }
     }
 }
 
@@ -266,7 +268,7 @@ const CYCLE_EXISTS: [(&str, &str, u8, bool); 13] = [
 pub fn check(h: &History, workload: Workload, opts: &Opts) -> Report {
     let mut a = match workload {
         Workload::ListAppend => crate::list_append::analyze(h),
-        Workload::RwRegister => crate::rw_register::analyze(h),
+        Workload::RwRegister => crate::rw_register::analyze_with(h, crate::rw_register::Options { wfr_keys: opts.wfr_keys }),
     };
     let models: Vec<&str> = opts.models.iter().map(String::as_str).collect();
     let extra: Vec<&str> = opts.anomalies.iter().map(String::as_str).collect();
@@ -318,7 +320,7 @@ fn scc_cases(g: &Graph, scc: &[u32], specs: &[CycleSpec], present: u8, a: &mut A
         if ruled_out.contains(friendly) {
             continue;
         }
-        let comps = if ext { extension_sccs(g, scc, types) } else { g.sccs(scc, |r| edge_type(r) & types != 0) };
+        let comps = if ext { extension_sccs(g, scc, types) } else { g.sccs(scc, |r| r & types != 0) };
         if let Some(c) = comps.first() {
             let kinds: Vec<&str> = [WW, WR, RW, PROCESS, REALTIME].into_iter().filter(|r| types & r != 0).map(rel_name).collect();
             let shape = if ext { format!("{} plus one rw hop", kinds.join("/")) } else { kinds.join("/") };
@@ -380,20 +382,26 @@ fn scc_cases(g: &Graph, scc: &[u32], specs: &[CycleSpec], present: u8, a: &mut A
     }
 }
 
-/// SCCs of `types` edges plus composite edges `a -types-> b -rw-> c`.
+/// SCCs of edges carrying any of `types`, plus composite edges
+/// `a -types-> b -rw-> c`. Membership (not edge type) decides, as in Elle: an
+/// edge that is both `rw` and `realtime` is still real-time evidence. A
+/// composite edge can close on itself (`a -> b -rw-> a`), which counts.
 fn extension_sccs(g: &Graph, scc: &[u32], types: u8) -> Vec<Vec<u32>> {
     let inside: HashMap<u32, u32> = scc.iter().enumerate().map(|(i, &v)| (v, i as u32)).collect();
     let mut b = GraphBuilder::default();
+    let mut self_loops = Vec::new();
     for (i, &v) in scc.iter().enumerate() {
         for &(w, r) in &g.adj[v as usize] {
             let Some(&wl) = inside.get(&w) else { continue };
-            if edge_type(r) & types == 0 {
+            if r & types == 0 {
                 continue;
             }
             b.link(i as u32, wl, WW);
             for &(x, r2) in &g.adj[w as usize] {
-                if edge_type(r2) == RW {
-                    if let Some(&xl) = inside.get(&x) {
+                if r2 & RW != 0 {
+                    if x == v {
+                        self_loops.push(v);
+                    } else if let Some(&xl) = inside.get(&x) {
                         b.link(i as u32, xl, WW);
                     }
                 }
@@ -402,7 +410,15 @@ fn extension_sccs(g: &Graph, scc: &[u32], types: u8) -> Vec<Vec<u32>> {
     }
     let local = b.finish(scc.len());
     let all: Vec<u32> = (0..scc.len() as u32).collect();
-    local.sccs(&all, |_| true).into_iter().map(|c| c.into_iter().map(|i| scc[i as usize]).collect()).collect()
+    let mut out: Vec<Vec<u32>> =
+        local.sccs(&all, |_| true).into_iter().map(|c| c.into_iter().map(|i| scc[i as usize]).collect()).collect();
+    for v in self_loops {
+        if !out.iter().any(|c| c.contains(&v)) {
+            out.push(vec![v]);
+        }
+    }
+    out.sort_by_key(Vec::len);
+    out
 }
 
 fn cycle_anomaly(a: &Analysis, kind: &str, steps: &[Step]) -> Anomaly {
