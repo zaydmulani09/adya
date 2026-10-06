@@ -1,0 +1,15 @@
+[package]
+name = "adya"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Black-box transactional isolation checker: finds G0, G1, G-single, G2 and friends in database histories. A native, JVM-free take on Jepsen's Elle."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zaydmulani09/adya"
+readme = "README.md"
+keywords = ["database", "isolation", "jepsen", "testing", "serializability"]
+categories = ["development-tools::testing", "database"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
