@@ -6,12 +6,14 @@
 //! says which table reads go to.
 
 use crate::gen::TxnOp;
-use crate::run::{parse_list, Client, Outcome};
+use crate::run::{Client, Outcome};
 use crate::Error;
 
 /// Isolation level names accepted by the SQL drivers.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 pub const LEVELS: [&str; 4] = ["read-uncommitted", "read-committed", "repeatable-read", "serializable"];
 
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 fn level_sql(level: &str) -> Result<&'static str, Error> {
     Ok(match level {
         "read-uncommitted" => "READ UNCOMMITTED",
@@ -25,6 +27,7 @@ fn level_sql(level: &str) -> Result<&'static str, Error> {
 #[cfg(feature = "sqlite")]
 pub mod sqlite {
     use super::*;
+    use crate::run::parse_list;
     use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
     /// SQLite has one isolation level (serializable); what varies is how a
@@ -132,6 +135,7 @@ pub mod sqlite {
 #[cfg(feature = "postgres")]
 pub mod postgres {
     use super::*;
+    use crate::run::parse_list;
     use ::postgres::error::SqlState;
     use ::postgres::{Client as PgClient, NoTls};
 
@@ -225,6 +229,7 @@ pub mod postgres {
 #[cfg(feature = "mysql")]
 pub mod mysql {
     use super::*;
+    use crate::run::parse_list;
     use ::mysql::prelude::Queryable;
     use ::mysql::{Conn, Opts};
 

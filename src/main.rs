@@ -163,6 +163,7 @@ fn main() -> ExitCode {
 }
 
 fn record(target: Target, url: Option<String>, isolation: &str, opts: &RunOpts) -> Result<String, Error> {
+    #[allow(unused_variables)] // only the SQL drivers need it
     let list = opts.gen.kind == Kind::ListAppend;
     if target == Target::Sim {
         let iso = adya::sim::Isolation::parse(isolation)
