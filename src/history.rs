@@ -131,6 +131,30 @@ impl History {
         Ok(builder.finish())
     }
 
+    /// Parses Jepsen's EDN history format (`history.edn`): one op map per
+    /// line, or a single vector of them.
+    pub fn from_edn(text: &str) -> Result<History, Error> {
+        let mut forms = crate::edn::parse_all(text)?;
+        if forms.len() == 1 && forms[0].is_array() {
+            forms = forms.pop().unwrap().as_array().cloned().unwrap_or_default();
+        }
+        let mut builder = Builder::default();
+        for (i, v) in forms.iter().enumerate() {
+            builder.push(i + 1, v)?;
+        }
+        Ok(builder.finish())
+    }
+
+    /// Parses JSON or EDN, whichever the text looks like.
+    pub fn parse(text: &str) -> Result<History, Error> {
+        let mut chars = text.chars().filter(|c| !c.is_whitespace() && *c != '[');
+        match chars.next() {
+            Some('{') if chars.next() == Some('"') => History::from_json(text),
+            Some('{') | Some('#') => History::from_edn(text),
+            _ => History::from_json(text),
+        }
+    }
+
     /// Builds a history from already-structured operations (used by the
     /// workload runner, which records ops as it goes).
     pub fn from_ops(ops: Vec<Op>, interner: Interner) -> History {
