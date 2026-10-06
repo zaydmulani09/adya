@@ -42,7 +42,7 @@ or Python harness ([barn](https://github.com/MongooseMoo/barn/issues/412),
 [bytecaskdb](https://github.com/gustavoamigo/bytecaskdb/pull/180)), and run
 into blocked Clojars mirrors, graphviz crashes, and logs interleaved into the
 JSON output. On the Windows machine where adya was written, elle-cli 0.1.11
-hangs on every history that contains an anomaly.
+hung, with no output, on each anomalous history it was given.
 
 adya is the same idea in a form you can drop into any pipeline:
 
