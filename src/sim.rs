@@ -10,9 +10,8 @@
 //! positives and missed anomalies at scale.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
 
-use crate::gen::{Gen, GenOpts, Rng, TxnOp};
+use crate::gen::{op_line, Gen, GenOpts, Rng, TxnOp};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Isolation {
@@ -146,7 +145,7 @@ pub fn run(opts: &SimOpts) -> String {
             if started < opts.txns {
                 started += 1;
                 let ops = gen.txn();
-                emit(&mut out, index, "invoke", pid[p], tick, &ops, &vec![None; ops.len()], list);
+                out.push_str(&op_line(index, "invoke", pid[p], tick * 1000, &ops, &vec![None; ops.len()], list));
                 procs[p] = Some(Txn {
                     reads: vec![None; ops.len()],
                     ops,
@@ -238,7 +237,7 @@ pub fn run(opts: &SimOpts) -> String {
             "fail"
         };
         let reads = if kind == "ok" { t.reads.clone() } else { vec![None; t.ops.len()] };
-        emit(&mut out, index, kind, pid[p], tick, &t.ops, &reads, list);
+        out.push_str(&op_line(index, kind, pid[p], tick * 1000, &t.ops, &reads, list));
         index += 1;
         if kind == "info" {
             pid[p] += opts.processes;
@@ -318,32 +317,4 @@ fn commit_writes(store: &mut Store, t: &Txn, stale: bool) {
         }
         store.install(*k, s);
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit(out: &mut String, index: usize, kind: &str, process: usize, tick: u64, ops: &[TxnOp], reads: &[Option<State>], list: bool) {
-    let mut value = String::from("[");
-    for (i, op) in ops.iter().enumerate() {
-        if i > 0 {
-            value.push(',');
-        }
-        match op {
-            TxnOp::Append(k, v) => write!(value, "[\"append\",{k},{v}]").unwrap(),
-            TxnOp::Write(k, v) => write!(value, "[\"w\",{k},{v}]").unwrap(),
-            TxnOp::Read(k) => match (&reads[i], list) {
-                (None, _) => write!(value, "[\"r\",{k},null]").unwrap(),
-                (Some(s), true) => write!(value, "[\"r\",{k},{:?}]", s).unwrap(),
-                (Some(s), false) => match s.last() {
-                    Some(v) => write!(value, "[\"r\",{k},{v}]").unwrap(),
-                    None => write!(value, "[\"r\",{k},null]").unwrap(),
-                },
-            },
-        }
-    }
-    value.push(']');
-    let _ = writeln!(
-        out,
-        "{{\"index\":{index},\"type\":\"{kind}\",\"f\":\"txn\",\"process\":{process},\"time\":{},\"value\":{value}}}",
-        tick * 1000
-    );
 }

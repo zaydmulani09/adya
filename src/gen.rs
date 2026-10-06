@@ -3,6 +3,7 @@
 //! values per key, and keys retired after enough writes so reads stay short.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// Tiny deterministic PRNG (splitmix64); enough for workload generation.
 #[derive(Clone, Debug)]
@@ -114,6 +115,32 @@ impl Gen {
         }
         txn
     }
+}
+
+/// Renders one history operation as a JSON line. `reads[i]` is the result
+/// of `ops[i]` if it is a completed read: a list's elements, or for a
+/// register zero or one element (`nil` or the value).
+pub fn op_line(index: usize, kind: &str, process: usize, time_ns: u64, ops: &[TxnOp], reads: &[Option<Vec<i64>>], list: bool) -> String {
+    let mut value = String::from("[");
+    for (i, op) in ops.iter().enumerate() {
+        if i > 0 {
+            value.push(',');
+        }
+        match op {
+            TxnOp::Append(k, v) => write!(value, "[\"append\",{k},{v}]").unwrap(),
+            TxnOp::Write(k, v) => write!(value, "[\"w\",{k},{v}]").unwrap(),
+            TxnOp::Read(k) => match (reads.get(i).and_then(Option::as_ref), list) {
+                (None, _) => write!(value, "[\"r\",{k},null]").unwrap(),
+                (Some(s), true) => write!(value, "[\"r\",{k},{s:?}]").unwrap(),
+                (Some(s), false) => match s.last() {
+                    Some(v) => write!(value, "[\"r\",{k},{v}]").unwrap(),
+                    None => write!(value, "[\"r\",{k},null]").unwrap(),
+                },
+            },
+        }
+    }
+    value.push(']');
+    format!("{{\"index\":{index},\"type\":\"{kind}\",\"f\":\"txn\",\"process\":{process},\"time\":{time_ns},\"value\":{value}}}\n")
 }
 
 #[cfg(test)]
