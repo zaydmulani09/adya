@@ -25,19 +25,24 @@ ALIAS = {"strong-serializable": "strict-serializable"}
 ELLE_WALL_CLOCK = 300
 
 
+class ElleCrashed(Exception):
+    pass
+
+
 def norm(models):
     return sorted({ALIAS.get(m, m) for m in models})
 
 
 def elle(jar, workload, model, path, search_ms):
     out = subprocess.run(
-        ["java", "-jar", jar, "-m", workload, "-c", model, "-s", str(search_ms), "-v", "json", str(path)],
+        ["java", "-Xmx6g", "-jar", jar, "-m", workload, "-c", model, "-s", str(search_ms), "-v", "json", str(path)],
         capture_output=True, text=True, timeout=ELLE_WALL_CLOCK, stdin=subprocess.DEVNULL,
     )
     text = out.stdout
     start = text.find("{")
     if start < 0:
-        raise RuntimeError(f"elle-cli produced no JSON: {out.stdout!r} {out.stderr[-2000:]!r}")
+        first = next((l for l in out.stderr.splitlines() if l.strip()), "no output")
+        raise ElleCrashed(first)
     return json.loads(text[start:])
 
 
@@ -82,6 +87,11 @@ def main():
                 t = time.time()
                 e = elle(jar, workload, model, path, search_ms)
                 elle_s += time.time() - t
+            except ElleCrashed as err:
+                elle_s += time.time() - t
+                verdicts = None
+                print(f"????  {label}: elle-cli crashed: {err} ({path})")
+                break
             except subprocess.TimeoutExpired:
                 elle_s += ELLE_WALL_CLOCK
                 verdicts = None
