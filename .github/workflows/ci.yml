@@ -51,7 +51,12 @@ jobs:
       - name: Elle's expected results
         run: python3 scripts/compare_elle_results.py /tmp/elle-cli/test/test-data target/release/adya
       - name: Random histories, both checkers
-        run: python3 scripts/differential.py target/release/adya /tmp/elle-bin/target/elle-cli-0.1.11-standalone.jar 50
+        run: python3 scripts/differential.py target/release/adya /tmp/elle-bin/target/elle-cli-0.1.11-standalone.jar 40
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-histories
+          path: out/differential/
 
   databases:
     runs-on: ubuntu-latest

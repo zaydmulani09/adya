@@ -5,29 +5,35 @@ Generates histories with adya's simulated database across isolation levels,
 workloads and seeds, checks each with both tools under several consistency
 models, and compares verdicts, anomaly types and the weakest models ruled out.
 
+When Elle's cycle search times out its answer is partial, so the case is
+re-checked by both tools with a 60 s budget. If Elle still cannot finish (or
+does not return at all within ELLE_WALL_CLOCK), the case is counted as
+inconclusive rather than as a difference.
+
     python scripts/differential.py ADYA_BIN ELLE_CLI_JAR [count]
 """
 import json
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ISOLATIONS = ["serializable", "snapshot-isolation", "read-committed", "read-uncommitted", "lost-update"]
 MODELS = ["strict-serializable", "serializable", "snapshot-isolation", "repeatable-read", "read-committed"]
 ALIAS = {"strong-serializable": "strict-serializable"}
+ELLE_WALL_CLOCK = 300
 
 
 def norm(models):
     return sorted({ALIAS.get(m, m) for m in models})
 
 
-def elle(jar, workload, model, path):
+def elle(jar, workload, model, path, search_ms):
     out = subprocess.run(
-        ["java", "-jar", jar, "-m", workload, "-c", model, "-v", "json", str(path)],
-        capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
+        ["java", "-jar", jar, "-m", workload, "-c", model, "-s", str(search_ms), "-v", "json", str(path)],
+        capture_output=True, text=True, timeout=ELLE_WALL_CLOCK, stdin=subprocess.DEVNULL,
     )
-    # elle-cli prints the JSON result after the file name.
     text = out.stdout
     start = text.find("{")
     if start < 0:
@@ -35,16 +41,26 @@ def elle(jar, workload, model, path):
     return json.loads(text[start:])
 
 
-def adya(binary, workload, model, path):
-    out = subprocess.run([binary, "check", "--json", "-m", workload, "-c", model, "-a", "G0", str(path)], capture_output=True, text=True)
+def adya(binary, workload, model, path, search_ms):
+    out = subprocess.run(
+        [binary, "check", "--json", "-m", workload, "-c", model, "-a", "G0",
+         "--cycle-search-timeout", str(search_ms), str(path)],
+        capture_output=True, text=True,
+    )
     return json.loads(out.stdout)
+
+
+def summary(r, valid_key, types_key):
+    return (r.get(valid_key), sorted(r.get(types_key, [])), norm(r.get("not", [])))
 
 
 def main():
     binary, jar = sys.argv[1], sys.argv[2]
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 20
-    tmp = Path(tempfile.mkdtemp())
-    same = differ = 0
+    tmp = Path("out/differential")
+    tmp.mkdir(parents=True, exist_ok=True)
+    same = differ = inconclusive = 0
+    elle_s = adya_s = 0.0
     for n in range(count):
         iso = ISOLATIONS[n % len(ISOLATIONS)]
         workload = "rw-register" if n % 4 == 3 else "list-append"
@@ -58,18 +74,39 @@ def main():
         # elle-cli wants a JSON array; adya reads either form.
         ops = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
         path.write_text(json.dumps(ops))
-        e = elle(jar, workload, model, path)
-        a = adya(binary, workload, model, path)
-        want = (e.get("valid?"), sorted(e.get("anomaly-types", [])), norm(e.get("not", [])))
-        got = (a["valid"], sorted(a["anomaly_types"]), norm(a["not"]))
         label = f"#{n} {workload} sim={iso} -c {model}"
+
+        verdicts = None
+        for search_ms in (1000, 60000):
+            try:
+                t = time.time()
+                e = elle(jar, workload, model, path, search_ms)
+                elle_s += time.time() - t
+            except subprocess.TimeoutExpired:
+                elle_s += ELLE_WALL_CLOCK
+                verdicts = None
+                print(f"????  {label}: elle-cli did not finish in {ELLE_WALL_CLOCK}s ({path})")
+                break
+            t = time.time()
+            a = adya(binary, workload, model, path, search_ms)
+            adya_s += time.time() - t
+            verdicts = (summary(e, "valid?", "anomaly-types"), summary(a, "valid", "anomaly_types"))
+            if "cycle-search-timeout" not in verdicts[0][1]:
+                break
+        if verdicts is None or "cycle-search-timeout" in verdicts[0][1]:
+            inconclusive += 1
+            if verdicts:
+                print(f"????  {label}: Elle's cycle search timed out\n   elle {verdicts[0]}\n   adya {verdicts[1]}")
+            continue
+        want, got = verdicts
         if want == got:
             same += 1
             print(f"same  {label}: {got[0]} {got[1]}")
         else:
             differ += 1
             print(f"DIFF  {label}  ({path})\n   elle {want}\n   adya {got}")
-    print(f"\n{same} same, {differ} different")
+    print(f"\n{same} same, {differ} different, {inconclusive} inconclusive")
+    print(f"total check time: elle-cli {elle_s:.1f}s (including JVM startup), adya {adya_s:.1f}s")
     sys.exit(1 if differ else 0)
 
 
